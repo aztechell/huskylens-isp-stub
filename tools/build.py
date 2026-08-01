@@ -81,11 +81,15 @@ def main() -> int:
 
     output = ROOT / "build"
     suffix = "_headless" if args.headless else "_lcd_init" if args.lcd_init_only else ""
-    shutil.copy2(built_bin, output / f"isp_prog_huskylens{suffix}.bin")
+    output_bin = output / f"isp_prog_huskylens{suffix}.bin"
+    shutil.copy2(built_bin, output_bin)
+    output_bin.chmod(0o644)
     shutil.copy2(built_elf, output / f"isp_stub{suffix}.elf")
     shutil.copy2(built_map, output / f"isp_stub{suffix}.map")
     if not args.headless and not args.lcd_init_only:
-        shutil.copy2(built_bin, ROOT / "isp_prog_huskylens.bin")
+        release_bin = ROOT / "isp_prog_huskylens.bin"
+        shutil.copy2(built_bin, release_bin)
+        release_bin.chmod(0o644)
     digest = hashlib.sha256(built_bin.read_bytes()).hexdigest()
     print(f"[OK] {built_bin.stat().st_size} bytes")
     print(f"[OK] sha256 {digest}")
