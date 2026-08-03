@@ -9,7 +9,6 @@
 #include "ui.h"
 
 #include <fpioa.h>
-#include <platform.h>
 #include <sleep.h>
 #include <string.h>
 #include <sysctl.h>
@@ -19,6 +18,8 @@
 #define FLASH_CAPACITY (16U * 1024U * 1024U)
 #define SECTOR_SIZE 4096U
 #define BLOCK_SIZE 65536U
+#define FLASH_SECTOR_COUNT (FLASH_CAPACITY / SECTOR_SIZE)
+#define ERASED_BITMAP_SIZE ((FLASH_SECTOR_COUNT + 7U) / 8U)
 
 static uint8_t rx_buffer[ISP_RX_CAPACITY];
 static slip_decoder_t decoder;
@@ -29,38 +30,23 @@ typedef struct {
     uint32_t next;
     uint32_t end;
     uint32_t completed;
+    uint32_t active_start;
     uint32_t active_size;
     uint8_t active;
 } erase_state_t;
 
 static erase_state_t erase_state;
-
-typedef struct {
-    volatile uint32_t cr;
-    volatile uint32_t torr;
-    volatile uint32_t ccvr;
-    volatile uint32_t crr;
-    volatile uint32_t stat;
-    volatile uint32_t eoi;
-} wdt_registers_t;
+/* One bit per flash sector.  A set bit is consumed after its next D4 write. */
+static uint8_t erased_sector_bitmap[ERASED_BITMAP_SIZE];
 
 static void reboot_soc(void)
 {
-    volatile wdt_registers_t *const wdt0 =
-        (volatile wdt_registers_t *)WDT0_BASE_ADDR;
-
-    /* The vendored minimal sysctl driver deliberately omits SOC and WDT reset
-       cases.  Arm WDT0 directly, matching the Kendryte SDK reboot sequence. */
-    sysctl->peri_reset.wdt0_reset = 1U;
+    /* This is the exact pulse used by the complete Kendryte SDK for
+       SYSCTL_RESET_SOC.  The minimal BSP intentionally omits that enum case,
+       so write the documented soft-reset register directly. */
+    sysctl->soft_reset.soft_reset = 1U;
     usleep(10U);
-    sysctl->peri_reset.wdt0_reset = 0U;
-    sysctl_clock_set_threshold(SYSCTL_THRESHOLD_WDT0, 0U);
-    sysctl_clock_enable(SYSCTL_CLOCK_WDT0);
-    sysctl->power_sel.power_mode_sel6 = 1U; /* WDT_RESET_ALL */
-    wdt0->cr = 0U;
-    wdt0->torr = 0U;
-    wdt0->crr = 0x76U;
-    wdt0->cr = 0x03U; /* reset mode + enable */
+    sysctl->soft_reset.soft_reset = 0U;
     for(;;)
         __asm__ volatile("nop");
 }
@@ -88,11 +74,47 @@ static uint8_t valid_payload(const isp_request_t *request, size_t frame_length)
                                           payload_length);
 }
 
+static uint8_t sector_is_pre_erased(uint32_t address)
+{
+    uint32_t sector = address / SECTOR_SIZE;
+    return (erased_sector_bitmap[sector >> 3] &
+            (uint8_t)(1U << (sector & 7U))) != 0U;
+}
+
+static void sector_clear_pre_erased(uint32_t address)
+{
+    uint32_t sector = address / SECTOR_SIZE;
+    erased_sector_bitmap[sector >> 3] &=
+        (uint8_t)~(uint8_t)(1U << (sector & 7U));
+}
+
+static void sectors_mark_pre_erased(uint32_t address, uint32_t length)
+{
+    while(length)
+    {
+        uint32_t sector = address / SECTOR_SIZE;
+        erased_sector_bitmap[sector >> 3] |= (uint8_t)(1U << (sector & 7U));
+        address += SECTOR_SIZE;
+        length -= SECTOR_SIZE;
+    }
+}
+
+static void sectors_clear_pre_erased(uint32_t address, uint32_t length)
+{
+    while(length)
+    {
+        sector_clear_pre_erased(address);
+        address += SECTOR_SIZE;
+        length -= SECTOR_SIZE;
+    }
+}
+
 static uint8_t erase_kick(void)
 {
     uint32_t remaining;
     if(erase_state.next >= erase_state.end)
         return 0U;
+    erase_state.active_start = erase_state.next;
     remaining = erase_state.end - erase_state.next;
     if((erase_state.next & (BLOCK_SIZE - 1U)) == 0U && remaining >= BLOCK_SIZE)
     {
@@ -114,6 +136,7 @@ static uint8_t erase_status(void)
         return ISP_OK;
     if(flash_is_busy() == FLASH_BUSY)
         return ISP_BUSY;
+    sectors_mark_pre_erased(erase_state.active_start, erase_state.active_size);
     erase_state.completed += erase_state.active_size;
     ui_erasing(erase_state.completed, erase_state.end - erase_state.start);
     if(erase_kick())
@@ -166,6 +189,8 @@ static uint8_t handle_request(const isp_request_t *request, size_t frame_length,
     case ISP_FLASH_ERASE:
         if(!flash_initialized)
             return ISP_BAD_INITIALIZATION;
+        if(erase_state.active)
+            return ISP_BUSY;
         if(frame_length < 16U || !valid_payload(request, frame_length))
         {
             ui_error("CRC");
@@ -184,7 +209,9 @@ static uint8_t handle_request(const isp_request_t *request, size_t frame_length,
         erase_state.next = address;
         erase_state.end = (address + length + SECTOR_SIZE - 1U) & ~(SECTOR_SIZE - 1U);
         erase_state.completed = 0U;
+        erase_state.active_start = 0U;
         erase_state.active_size = 0U;
+        sectors_clear_pre_erased(address, erase_state.end - address);
         erase_state.active = 1U;
         ui_erasing(0U, erase_state.end - erase_state.start);
         erase_kick();
@@ -218,13 +245,18 @@ static uint8_t handle_request(const isp_request_t *request, size_t frame_length,
             ui_error("BAD HEADER");
             return ISP_BAD_ADDRESS;
         }
-        flash_sector_erase(address);
-        while(flash_is_busy() == FLASH_BUSY) { }
+        if(!sector_is_pre_erased(address))
+        {
+            flash_sector_erase(address);
+            while(flash_is_busy() == FLASH_BUSY) { }
+        }
         if(flash_write_data(address, (uint8_t *)request->data, length) != FLASH_OK)
         {
+            sector_clear_pre_erased(address);
             ui_error("FLASH WRITE");
             return ISP_FLASH_ERROR;
         }
+        sector_clear_pre_erased(address);
         ui_write_complete(address, request->data, length);
         return ISP_OK;
 
@@ -256,7 +288,11 @@ int main(void)
     for(;;)
     {
         if(uart_receive_data(UART_PORT, (char *)&byte, 1U) != 1U)
+        {
+            if(erase_state.active)
+                (void)erase_status();
             continue;
+        }
         if(slip_decode_byte(&decoder, byte, rx_buffer, sizeof(rx_buffer)))
         {
             isp_response_t response;
@@ -272,12 +308,16 @@ int main(void)
                 isp_request_t *request = (isp_request_t *)rx_buffer;
                 response.reason = handle_request(request, decoder.length, &reboot);
             }
+            slip_send(&response, sizeof(response));
             if(reboot)
             {
-                msleep(500U);
+                /* A D5 acknowledgement is part of the uploader contract.
+                   Four SLIP bytes need less than 0.4 ms at the initial
+                   115200 baud; leave ample time before the SoC reset.
+                   TEMT is unreliable on this board's UART3 configuration. */
+                msleep(10U);
                 reboot_soc();
             }
-            slip_send(&response, sizeof(response));
         }
     }
 }

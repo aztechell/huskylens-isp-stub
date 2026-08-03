@@ -74,8 +74,8 @@ class ProtocolHarness:
             self.confirmed[address] = max(length, self.confirmed.get(address, 0))
             return operation, OK
         if operation == 0xD5:
-            # The original ktool ISP resets before its common response path.
-            return None
+            # The stub must acknowledge D5 before resetting the SoC.
+            return operation, OK
         return operation, BAD_COMMAND
 
 
@@ -97,7 +97,7 @@ class ProtocolHarnessTests(unittest.TestCase):
         self.assertEqual(stub.feed(request(0xD4, write)), (0xD4, OK))
         self.assertEqual(stub.feed(request(0xD4, write)), (0xD4, OK))
         self.assertEqual(stub.confirmed, {0: 4096})
-        self.assertIsNone(stub.feed(request(0xD5)))
+        self.assertEqual(stub.feed(request(0xD5)), (0xD5, OK))
 
     def test_crc_and_unknown_command_rejection(self) -> None:
         packet = bytearray(request(0xD4, struct.pack("<II", 0, 1) + b"x"))

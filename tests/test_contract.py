@@ -59,11 +59,11 @@ class ContractTests(unittest.TestCase):
         binary = ROOT / "isp_prog_huskylens.bin"
         self.assertTrue(binary.is_file())
         self.assertLessEqual(binary.stat().st_size, 64 * 1024)
-        self.assertEqual(binary.stat().st_size, 17_600)
+        self.assertEqual(binary.stat().st_size, 17_856)
         import hashlib
         self.assertEqual(
             hashlib.sha256(binary.read_bytes()).hexdigest(),
-            "db3ba7debd7a9a0246b65853d774fc6a568507e148772e2cdffa0d3c55ca5623",
+            "da6305613ff9179afd439be1227ec877d583cde351afed604c7e053052f57cd7",
         )
 
     def test_firmware_declares_required_protocol_and_ui_states(self) -> None:
@@ -75,9 +75,10 @@ class ContractTests(unittest.TestCase):
         self.assertIn("isp_crc32", main)
         self.assertIn("ui_validate_write", main)
         self.assertIn("reboot_soc", main)
-        self.assertIn("WDT0_BASE_ADDR", main)
-        self.assertNotIn("sysctl_reset(SYSCTL_RESET_SOC)", main)
-        self.assertLess(main.index("if(reboot)"), main.index("slip_send(&response"))
+        self.assertIn("sysctl->soft_reset.soft_reset = 1U", main)
+        self.assertIn("sysctl->soft_reset.soft_reset = 0U", main)
+        self.assertLess(main.index("slip_send(&response"), main.index("if(reboot)"))
+        self.assertIn("msleep(10U)", main)
         for state in ("WAITING FOR HOST", "INITIALIZING FLASH", "ERASING", "FLASHING", "FINALIZING", "DONE", "ERROR"):
             self.assertIn(state, ui)
 
@@ -87,6 +88,20 @@ class ContractTests(unittest.TestCase):
         self.assertIn("if(displayed_percent == value)", ui)
         self.assertIn("if(current_state == state)", ui)
         self.assertIn("width - bar_width", ui)
+
+    def test_flash_writer_programs_each_page_once(self) -> None:
+        flash = (ROOT / "src" / "flash.c").read_text()
+        self.assertIn("flash_page_program_fun(addr, data_buf, write_len);", flash)
+        self.assertNotIn("write_len > 32", flash)
+        self.assertNotIn("while (write_len)", flash)
+
+    def test_range_erase_is_background_and_consumed_by_writes(self) -> None:
+        main = (ROOT / "src" / "main.c").read_text()
+        self.assertIn("erased_sector_bitmap", main)
+        self.assertIn("sectors_mark_pre_erased(erase_state.active_start", main)
+        self.assertIn("if(!sector_is_pre_erased(address))", main)
+        self.assertIn("sector_clear_pre_erased(address);", main)
+        self.assertIn("if(erase_state.active)\n                (void)erase_status();", main)
 
 
 if __name__ == "__main__":

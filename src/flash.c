@@ -402,19 +402,17 @@ static enum flash_status_t flash_quad_page_program(uint32_t addr, uint8_t *data_
 //-------------------------------------------------------------------------------------
 enum flash_status_t flash_write_data(uint32_t addr, uint8_t *data_buf, uint32_t length)
 {
-    uint32_t page_remain, write_len, len;
+    uint32_t page_remain, write_len;
 
     while (length) {
         page_remain = flash_FLASH_PAGE_SIZE - (addr & (flash_FLASH_PAGE_SIZE - 1));
         write_len = length < page_remain ? length : page_remain;
         length -= write_len;
-        while (write_len) {
-            len = write_len > 32 ? 32 : write_len;
-            flash_page_program_fun(addr, data_buf, len);
-            addr += len;
-            data_buf += len;
-            write_len -= len;
-        }
+        /* The SPI helpers stream beyond their 32-byte FIFO.  One NOR page
+           program per page avoids seven needless program/busy cycles. */
+        flash_page_program_fun(addr, data_buf, write_len);
+        addr += write_len;
+        data_buf += write_len;
     }
     return FLASH_OK;
 }

@@ -44,8 +44,8 @@ Outputs are written to `build/isp_stub.elf`, `build/isp_stub.map`, and
 `build/isp_prog_huskylens.bin`. The checked-in `isp_prog_huskylens.bin` is
 refreshed by the same build. The build fails above the 64 KiB binary budget.
 
-The current release artifact is 17,600 bytes with SHA-256
-`db3ba7debd7a9a0246b65853d774fc6a568507e148772e2cdffa0d3c55ca5623`.
+The current release artifact is 17,856 bytes with SHA-256
+`da6305613ff9179afd439be1227ec877d583cde351afed604c7e053052f57cd7`.
 
 Pushing a `v*` tag runs the release workflow, rebuilds and tests the stub, and
 publishes the binary, checksum, ELF, and linker map as GitHub release assets.
