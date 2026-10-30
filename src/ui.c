@@ -24,6 +24,9 @@ uint32_t ui_wire_size(void) { return 0U; }
 
 #else
 
+#define BAR_OUTER_WIDTH (LCD_WIDTH - 40U)
+#define BAR_INNER_WIDTH (LCD_WIDTH - 48U)
+
 #define BLACK 0x0000U
 #define WHITE 0xFFFFU
 #define GREEN 0x07E0U
@@ -65,7 +68,7 @@ static uint8_t displayed_percent;
 
 static void reset_progress_area(void)
 {
-    lcd_fill_rect(0U, 130U, 320U, 110U, BLACK);
+    lcd_fill_rect(0U, 130U, LCD_WIDTH, 110U, BLACK);
     progress_mode = PROGRESS_NONE;
     bar_width = 0U;
     displayed_percent = 0xFFU;
@@ -75,7 +78,7 @@ static void set_status(ui_state_t state, const char *status, uint16_t color)
 {
     if(current_state == state)
         return;
-    lcd_fill_rect(0U, 74U, 320U, 42U, BLACK);
+    lcd_fill_rect(0U, 74U, LCD_WIDTH, 42U, BLACK);
     lcd_draw_text_centered(82U, status, 2U, color, BLACK);
     current_state = state;
 
@@ -87,8 +90,8 @@ static void prepare_bar(progress_mode_t mode)
 {
     if(progress_mode == mode)
         return;
-    lcd_fill_rect(20U, 138U, 280U, 34U, DARK_GREEN);
-    lcd_fill_rect(24U, 142U, 272U, 26U, DARK_GREEN);
+    lcd_fill_rect(20U, 138U, BAR_OUTER_WIDTH, 34U, DARK_GREEN);
+    lcd_fill_rect(24U, 142U, BAR_INNER_WIDTH, 26U, DARK_GREEN);
     progress_mode = mode;
     bar_width = 0U;
     displayed_percent = 0xFFU;
@@ -96,10 +99,10 @@ static void prepare_bar(progress_mode_t mode)
 
 static void update_bar(uint16_t width, uint16_t color)
 {
-    if(width > 272U) width = 272U;
+    if(width > BAR_INNER_WIDTH) width = BAR_INNER_WIDTH;
     if(width < bar_width)
     {
-        lcd_fill_rect(24U, 142U, 272U, 26U, DARK_GREEN);
+        lcd_fill_rect(24U, 142U, BAR_INNER_WIDTH, 26U, DARK_GREEN);
         bar_width = 0U;
     }
     if(width > bar_width)
@@ -127,15 +130,15 @@ static void draw_progress(uint8_t value, uint16_t color)
     }
     label[index++] = '%';
     label[index] = '\0';
-    update_bar((uint16_t)(272U * value / 100U), color);
-    lcd_fill_rect(0U, 184U, 320U, 50U, BLACK);
+    update_bar((uint16_t)(BAR_INNER_WIDTH * value / 100U), color);
+    lcd_fill_rect(0U, 184U, LCD_WIDTH, 50U, BLACK);
     lcd_draw_text_centered(190U, label, 3U, WHITE, BLACK);
     displayed_percent = value;
 }
 
 static void draw_erase_activity(uint32_t done, uint32_t total)
 {
-    uint16_t width = total ? (uint16_t)((uint64_t)272U * done / total) : 0U;
+    uint16_t width = total ? (uint16_t)((uint64_t)BAR_INNER_WIDTH * done / total) : 0U;
     prepare_bar(PROGRESS_ERASE);
     update_bar(width, AMBER);
 }
@@ -152,7 +155,7 @@ void ui_init(void)
     lcd_init();
 #ifndef ISP_LCD_INIT_ONLY
     lcd_clear(BLACK);
-    lcd_draw_text_centered(20U, "HUSKYLENS UPDATE", 2U, WHITE, BLACK);
+    lcd_draw_text_centered(20U, ISP_UPDATE_TITLE, 2U, WHITE, BLACK);
     ui_waiting();
 #endif
 }

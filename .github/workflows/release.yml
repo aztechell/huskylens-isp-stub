@@ -24,11 +24,13 @@ jobs:
         run: python tools/bootstrap_deps.py
       - name: Build and test
         run: |
-          python tools/build.py
+          python tools/build.py --board all
           python -m unittest discover -s tests -v
-          git diff --exit-code -- isp_prog_huskylens.bin
+          git diff --exit-code -- isp_prog_huskylens.bin isp_prog_cube.bin artifacts.json
       - name: Prepare checksums
-        run: sha256sum build/isp_prog_huskylens.bin > build/isp_prog_huskylens.bin.sha256
+        run: |
+          sha256sum build/isp_prog_huskylens.bin > build/isp_prog_huskylens.bin.sha256
+          sha256sum build/isp_prog_cube.bin > build/isp_prog_cube.bin.sha256
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -36,9 +38,14 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             build/isp_prog_huskylens.bin \
             build/isp_prog_huskylens.bin.sha256 \
+            build/isp_prog_cube.bin \
+            build/isp_prog_cube.bin.sha256 \
             build/isp_stub.elf \
             build/isp_stub.map \
+            build/isp_stub_cube.elf \
+            build/isp_stub_cube.map \
+            artifacts.json \
             --verify-tag \
-            --title "HuskyLens ISP Stub $GITHUB_REF_NAME" \
+            --title "HuskyLens and Maix Cube ISP Stubs $GITHUB_REF_NAME" \
             --generate-notes
 

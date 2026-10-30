@@ -1,5 +1,10 @@
 set_target_properties(isp_stub PROPERTIES
     LINK_FLAGS "-Wl,-Map=${CMAKE_BINARY_DIR}/isp_stub.map")
+if(ISP_BOARD STREQUAL "cube")
+    target_compile_definitions(isp_stub PRIVATE ISP_BOARD_CUBE=1)
+elseif(NOT ISP_BOARD STREQUAL "huskylens")
+    message(FATAL_ERROR "ISP_BOARD must be huskylens or cube")
+endif()
 if(ISP_HEADLESS)
     target_compile_definitions(isp_stub PRIVATE ISP_HEADLESS=1)
 endif()

@@ -6,15 +6,16 @@
 #include <spi.h>
 #include <sysctl.h>
 
-#define LCD_WIDTH 320U
-#define LCD_HEIGHT 240U
 #define LCD_SPI SPI_DEVICE_0
 #define LCD_CS SPI_CHIP_SELECT_3
-#define GPIO_LCD_RESET 14U
-#define GPIO_LCD_DC 15U
-#define GPIO_LCD_BACKLIGHT 13U
 
+#if ISP_BOARD_CUBE
+#include <isp_dma.h>
+static uint32_t dma_words[LCD_WIDTH * LCD_HEIGHT]
+    __attribute__((aligned(64), section(".bss")));
+#else
 static uint8_t line_buffer[LCD_WIDTH * 2U];
+#endif
 static uint8_t lcd_available = 1U;
 static volatile spi_t *const lcd_spi = (volatile spi_t *)SPI0_BASE_ADDR;
 static volatile uint32_t *const gpiohs = (volatile uint32_t *)GPIOHS_BASE_ADDR;
@@ -28,6 +29,84 @@ static void gpio_write(uint8_t pin, uint8_t high)
     else gpiohs[3] &= ~mask;
 }
 
+#if ISP_BOARD_CUBE
+static uint32_t *uncached_words(void)
+{
+    uintptr_t address = (uintptr_t)dma_words;
+    if(address >= 0x80000000UL && address < 0x80600000UL)
+        address -= 0x40000000UL;
+    return (uint32_t *)address;
+}
+
+static uint64_t lcd_timeout_cycles(void)
+{
+    return sysctl_clock_get_freq(SYSCTL_CLOCK_CPU) / 2U; /* 500 ms */
+}
+
+static void cube_disable(void)
+{
+    lcd_spi->dmacr = 0U;
+    isp_dma_abort();
+    lcd_spi->ser = 0U;
+    lcd_spi->ssienr = 0U;
+    lcd_available = 0U;
+}
+
+static uint8_t cube_can_stage(void)
+{
+    if(!lcd_available)
+        return 0U;
+    if(isp_dma_busy())
+    {
+        cube_disable();
+        return 0U;
+    }
+    return 1U;
+}
+
+static void cube_send_words(size_t count, uint32_t frame_bits, uint8_t command)
+{
+    uint64_t start = read_cycle();
+    uint64_t timeout = lcd_timeout_cycles();
+    if(!lcd_available)
+        return;
+    lcd_spi->ssienr = 0U;
+    lcd_spi->ser = 0U;
+    lcd_spi->ctrlr0 = ((frame_bits - 1U) << 16) | (3U << 21) | (1U << 8);
+    /* OCTAL instructions use 8 bits; data uses an 8/16-bit address phase. */
+    lcd_spi->spi_ctrlr0 = 2U | (command ? 2U << 8 : (frame_bits / 4U) << 2);
+    lcd_spi->ssienr = 1U;
+    lcd_spi->dmacr = 2U;
+    if(!isp_dma_start(uncached_words(), &lcd_spi->dr[0], count))
+        goto failed;
+    /* Arm DMA before selecting the panel: no CPU gaps inside a transaction. */
+    lcd_spi->ser = 1U << LCD_CS;
+    while(isp_dma_busy())
+        if(read_cycle() - start >= timeout)
+            goto failed;
+    if(!isp_dma_succeeded())
+        goto failed;
+    while((lcd_spi->sr & 0x05U) != 0x04U)
+        if(read_cycle() - start >= timeout)
+            goto failed;
+    lcd_spi->ser = 0U;
+    lcd_spi->ssienr = 0U;
+    lcd_spi->dmacr = 0U;
+    return;
+failed:
+    cube_disable();
+}
+
+static void cube_send_bytes(const uint8_t *data, size_t length, uint8_t command)
+{
+    uint32_t *words = uncached_words();
+    if(!cube_can_stage())
+        return;
+    for(size_t i = 0U; i < length; ++i)
+        words[i] = data[i];
+    cube_send_words(length, 8U, command);
+}
+#else
 static void spi_send_bytes(const uint8_t *data, size_t length)
 {
     size_t offset = 0U;
@@ -68,11 +147,16 @@ static void spi_send_bytes(const uint8_t *data, size_t length)
     lcd_spi->ser = 0U;
     lcd_spi->ssienr = 0U;
 }
+#endif
 
 static void lcd_send(uint8_t data_mode, const uint8_t *data, size_t length)
 {
     gpio_write(GPIO_LCD_DC, data_mode);
+#if ISP_BOARD_CUBE
+    cube_send_bytes(data, length, !data_mode);
+#else
     spi_send_bytes(data, length);
+#endif
 }
 
 static void lcd_command(uint8_t command)
@@ -101,23 +185,35 @@ static void lcd_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 
 void lcd_init(void)
 {
+#if !ISP_BOARD_CUBE
     static const uint8_t b2[] = {0x01, 0x01, 0x00, 0x01, 0x01};
     static const uint8_t d0[] = {0xA4, 0xA1};
+#endif
 
-    fpioa_set_function(18, FUNC_GPIOHS15);
-    fpioa_set_function(19, FUNC_SPI0_SS3);
-    fpioa_set_function(20, FUNC_SPI0_SCLK);
-    fpioa_set_function(21, FUNC_SPI0_D0);
-    fpioa_set_function(22, FUNC_GPIOHS14);
-    fpioa_set_function(24, FUNC_GPIOHS13);
+    lcd_available = 1U;
+#if ISP_BOARD_CUBE
+    sysctl_set_power_mode(SYSCTL_POWER_BANK6, SYSCTL_POWER_V18);
+    sysctl_set_power_mode(SYSCTL_POWER_BANK7, SYSCTL_POWER_V18);
+    gpio_write(GPIO_LCD_BACKLIGHT, 1U); /* active-low: route while off */
+#endif
+    fpioa_set_function(LCD_PIN_DC, FUNC_GPIOHS15);
+    fpioa_set_function(LCD_PIN_CS, FUNC_SPI0_SS3);
+    fpioa_set_function(LCD_PIN_CLOCK, FUNC_SPI0_SCLK);
+#if !ISP_BOARD_CUBE
+    fpioa_set_function(LCD_PIN_MOSI, FUNC_SPI0_D0);
+#endif
+    fpioa_set_function(LCD_PIN_RESET, FUNC_GPIOHS14);
+    fpioa_set_function(LCD_PIN_BACKLIGHT, FUNC_GPIOHS13);
     gpio_write(GPIO_LCD_DC, 0U);
     gpio_write(GPIO_LCD_RESET, 1U);
-    gpio_write(GPIO_LCD_BACKLIGHT, 1U);
+#if !ISP_BOARD_CUBE
+    gpio_write(GPIO_LCD_BACKLIGHT, LCD_BACKLIGHT_ON);
+#endif
 
     sysctl_set_spi0_dvp_data(1U);
     sysctl_clock_enable(SYSCTL_CLOCK_SPI0);
     sysctl_clock_set_threshold(SYSCTL_THRESHOLD_SPI0, 0U);
-    lcd_spi->baudr = sysctl_clock_get_freq(SYSCTL_CLOCK_SPI0) / 40000000U;
+    lcd_spi->baudr = sysctl_clock_get_freq(SYSCTL_CLOCK_SPI0) / LCD_CLOCK_HZ;
     if(lcd_spi->baudr < 2U) lcd_spi->baudr = 2U;
     lcd_spi->baudr = (lcd_spi->baudr + 1U) & ~1U;
     lcd_spi->imr = 0U;
@@ -130,10 +226,30 @@ void lcd_init(void)
     lcd_spi->spi_ctrlr0 = 0U;
     lcd_spi->endian = 0U;
 
+#if ISP_BOARD_CUBE
+    if(!isp_dma_init(lcd_timeout_cycles()))
+    {
+        cube_disable();
+        return;
+    }
+#endif
 #ifdef ISP_LCD_INIT_ONLY
     return;
 #endif
 
+#if ISP_BOARD_CUBE
+    gpio_write(GPIO_LCD_RESET, 0U); msleep(50U);
+    gpio_write(GPIO_LCD_RESET, 1U); msleep(50U);
+    lcd_command(0x01); msleep(50U);
+    lcd_command(0x11); msleep(120U);
+    lcd_command(0x3A); lcd_data_u8(0x55); msleep(10U);
+    lcd_command(0x36); lcd_data_u8(0x60);
+    lcd_command(0x21); msleep(10U);
+    lcd_command(0x13); msleep(10U);
+    lcd_command(0x29);
+    if(lcd_available)
+        gpio_write(GPIO_LCD_BACKLIGHT, LCD_BACKLIGHT_ON);
+#else
     gpio_write(GPIO_LCD_RESET, 1U); msleep(1U);
     gpio_write(GPIO_LCD_RESET, 0U); msleep(1U);
     gpio_write(GPIO_LCD_RESET, 1U); msleep(125U);
@@ -152,15 +268,27 @@ void lcd_init(void)
     lcd_command(0xD0); lcd_send(1U, d0, sizeof(d0));
     lcd_command(0xD6); lcd_data_u8(0xA1);
     lcd_command(0x29); msleep(20U);
+#endif
 }
 
 void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
                    uint16_t color)
 {
-    if(x >= LCD_WIDTH || y >= LCD_HEIGHT || width == 0U || height == 0U)
+    if(!lcd_available || x >= LCD_WIDTH || y >= LCD_HEIGHT || width == 0U || height == 0U)
         return;
     if(x + width > LCD_WIDTH) width = LCD_WIDTH - x;
     if(y + height > LCD_HEIGHT) height = LCD_HEIGHT - y;
+#if ISP_BOARD_CUBE
+    lcd_window(x, y, x + width - 1U, y + height - 1U);
+    if(!cube_can_stage())
+        return;
+    uint32_t *words = uncached_words();
+    size_t count = (size_t)width * height;
+    for(size_t i = 0U; i < count; ++i)
+        words[i] = color;
+    gpio_write(GPIO_LCD_DC, 1U);
+    cube_send_words(count, 16U, 0U);
+#else
     for(uint16_t i = 0; i < width; ++i)
     {
         line_buffer[i * 2U] = (uint8_t)(color >> 8);
@@ -170,69 +298,10 @@ void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
     gpio_write(GPIO_LCD_DC, 1U);
     for(uint16_t row = 0; row < height; ++row)
         spi_send_bytes(line_buffer, width * 2U);
+#endif
 }
 
 void lcd_clear(uint16_t color)
 {
     lcd_fill_rect(0U, 0U, LCD_WIDTH, LCD_HEIGHT, color);
-}
-
-static const uint8_t *glyph(char ch)
-{
-    static const uint8_t blank[5] = {0,0,0,0,0};
-    static const uint8_t percent[5] = {0x63,0x13,0x08,0x64,0x63};
-    static const uint8_t dash[5] = {0x08,0x08,0x08,0x08,0x08};
-    static const uint8_t colon[5] = {0,0x36,0x36,0,0};
-    static const uint8_t digits[10][5] = {
-        {0x3E,0x51,0x49,0x45,0x3E},{0,0x42,0x7F,0x40,0},
-        {0x42,0x61,0x51,0x49,0x46},{0x21,0x41,0x45,0x4B,0x31},
-        {0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},
-        {0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},
-        {0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E}
-    };
-    static const uint8_t letters[26][5] = {
-        {0x7E,0x11,0x11,0x11,0x7E},{0x7F,0x49,0x49,0x49,0x36},
-        {0x3E,0x41,0x41,0x41,0x22},{0x7F,0x41,0x41,0x22,0x1C},
-        {0x7F,0x49,0x49,0x49,0x41},{0x7F,0x09,0x09,0x09,0x01},
-        {0x3E,0x41,0x49,0x49,0x7A},{0x7F,0x08,0x08,0x08,0x7F},
-        {0,0x41,0x7F,0x41,0},{0x20,0x40,0x41,0x3F,0x01},
-        {0x7F,0x08,0x14,0x22,0x41},{0x7F,0x40,0x40,0x40,0x40},
-        {0x7F,0x02,0x0C,0x02,0x7F},{0x7F,0x04,0x08,0x10,0x7F},
-        {0x3E,0x41,0x41,0x41,0x3E},{0x7F,0x09,0x09,0x09,0x06},
-        {0x3E,0x41,0x51,0x21,0x5E},{0x7F,0x09,0x19,0x29,0x46},
-        {0x46,0x49,0x49,0x49,0x31},{0x01,0x01,0x7F,0x01,0x01},
-        {0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},
-        {0x3F,0x40,0x38,0x40,0x3F},{0x63,0x14,0x08,0x14,0x63},
-        {0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43}
-    };
-    if(ch >= '0' && ch <= '9') return digits[ch - '0'];
-    if(ch >= 'A' && ch <= 'Z') return letters[ch - 'A'];
-    if(ch == '%') return percent;
-    if(ch == '-') return dash;
-    if(ch == ':') return colon;
-    return blank;
-}
-
-static void draw_char(uint16_t x, uint16_t y, char ch, uint8_t scale,
-                      uint16_t foreground, uint16_t background)
-{
-    const uint8_t *bits = glyph(ch);
-    lcd_fill_rect(x, y, 6U * scale, 8U * scale, background);
-    for(uint8_t column = 0; column < 5U; ++column)
-        for(uint8_t row = 0; row < 7U; ++row)
-            if(bits[column] & (1U << row))
-                lcd_fill_rect(x + column * scale, y + row * scale,
-                              scale, scale, foreground);
-}
-
-void lcd_draw_text_centered(uint16_t y, const char *text, uint8_t scale,
-                            uint16_t foreground, uint16_t background)
-{
-    size_t length = 0U;
-    while(text[length]) ++length;
-    uint16_t width = (uint16_t)(length * 6U * scale);
-    uint16_t x = width < LCD_WIDTH ? (LCD_WIDTH - width) / 2U : 0U;
-    for(size_t i = 0; i < length; ++i)
-        draw_char(x + (uint16_t)i * 6U * scale, y, text[i], scale,
-                  foreground, background);
 }

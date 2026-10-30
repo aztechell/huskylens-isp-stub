@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import binascii
+import hashlib
+import json
 from pathlib import Path
 import struct
 import unittest
@@ -56,15 +58,18 @@ class ContractTests(unittest.TestCase):
             self.assertFalse(0 < raw_size <= maximum_raw)
 
     def test_release_binary_contract(self) -> None:
-        binary = ROOT / "isp_prog_huskylens.bin"
-        self.assertTrue(binary.is_file())
-        self.assertLessEqual(binary.stat().st_size, 64 * 1024)
-        self.assertEqual(binary.stat().st_size, 17_856)
-        import hashlib
-        self.assertEqual(
-            hashlib.sha256(binary.read_bytes()).hexdigest(),
-            "da6305613ff9179afd439be1227ec877d583cde351afed604c7e053052f57cd7",
-        )
+        manifest = json.loads((ROOT / "artifacts.json").read_text())
+        self.assertEqual(set(manifest), {"huskylens", "cube"})
+        for board, artifact in manifest.items():
+            with self.subTest(board=board):
+                binary = ROOT / artifact["file"]
+                self.assertEqual(binary.name, f"isp_prog_{board}.bin")
+                self.assertGreater(binary.stat().st_size, 0)
+                self.assertLessEqual(binary.stat().st_size, 64 * 1024)
+                self.assertEqual(binary.stat().st_size, artifact["size"])
+                self.assertEqual(hashlib.sha256(binary.read_bytes()).hexdigest(),
+                                 artifact["sha256"])
+        self.assertNotEqual(manifest["cube"]["sha256"], manifest["huskylens"]["sha256"])
 
     def test_firmware_declares_required_protocol_and_ui_states(self) -> None:
         protocol = (ROOT / "src" / "isp_protocol.h").read_text()

@@ -2,6 +2,7 @@
 #define HUSKY_ISP_LCD_H
 
 #include <stdint.h>
+#include "board.h"
 
 void lcd_init(void);
 void lcd_clear(uint16_t color);
