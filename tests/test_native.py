@@ -16,19 +16,21 @@ SDK = ROOT / "third_party/minsdk/lib"
 
 
 class NativeTests(unittest.TestCase):
-    def compile_and_run(self, name: str, sources: list[Path], cube: bool = True) -> None:
+    def compile_and_run(self, name: str, sources: list[Path], cube: bool = True,
+                        stubs: str = "lcd_stubs") -> None:
         compiler = os.environ.get("CC") or shutil.which("gcc") or shutil.which("cc")
         if not compiler:
             self.skipTest("host C compiler unavailable")
         with tempfile.TemporaryDirectory(prefix="isp-native-") as directory:
             executable = Path(directory) / (name + (".exe" if os.name == "nt" else ""))
             compiled = subprocess.run([
-                compiler, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror",
+                compiler, "-std=gnu11", "-O1", "-Wall", "-Wextra", "-Werror",
+                *(["-Wno-unused-parameter", "-Wno-sign-compare"] if stubs == "sysctl_stubs" else []),
                 f"-DISP_BOARD_CUBE={int(cube)}",
-                "-I", str(ROOT / "tests/lcd_stubs"), "-I", str(ROOT / "src"),
+                "-I", str(ROOT / "tests" / stubs), "-I", str(ROOT / "src"),
                 "-I", str(SDK / "drivers/include"),
                 "-I", str(SDK / "bsp/include"),
-                *(str(p) for p in sources), "-o", str(executable),
+                *(str(p) for p in sources), "-lm", "-o", str(executable),
             ], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
             # Optional persistent PPM previews are drawn by the real C UI/font.
@@ -53,6 +55,10 @@ class NativeTests(unittest.TestCase):
     def test_actual_dma_register_setup_and_bounded_reset(self) -> None:
         self.compile_and_run("dma", [ROOT / "tests/dma_harness.c",
                                     SDK / "drivers/dmac_isp.c"])
+
+    def test_actual_minimal_bsp_enables_dma_clock(self) -> None:
+        self.compile_and_run("sysctl", [ROOT / "tests/sysctl_harness.c",
+            SDK / "drivers/sysctl.c"], stubs="sysctl_stubs")
 
 
 class ElfContractTests(unittest.TestCase):

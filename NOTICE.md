@@ -15,6 +15,8 @@ FPIOA, UART, and timing support needed by this SRAM program is included.
 The Cube LCD DMA0 implementation in `dmac_isp.c` is a polling-only subset
 derived from `lib/drivers/dmac.c` in the same pinned Kendryte SDK. Its reset
 wait is bounded and it uses uncached memory without allocation or interrupts.
+The minimal BSP's clock dispatcher also enables/disables the DMA clock gate;
+the original ktool subset had omitted that case.
 The SDK's `dmac.h` and `plic.h` declarations retain their original licenses.
 Cube LCD routing, octal transfer phases and panel initialization follow the
 existing HackyLens Cube port and Sipeed MaixPy-v1 board/driver definitions at

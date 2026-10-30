@@ -293,6 +293,9 @@ static int sysctl_clock_device_en(sysctl_clock_t clock, uint8_t en)
         case SYSCTL_CLOCK_FFT:
             sysctl->clk_en_peri.fft_clk_en = en;
             break;*/
+        case SYSCTL_CLOCK_DMA:
+            sysctl->clk_en_peri.dma_clk_en = en;
+            break;
         case SYSCTL_CLOCK_SPI3:
             sysctl->clk_en_peri.spi3_clk_en = en;
             break;
