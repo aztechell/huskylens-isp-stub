@@ -114,13 +114,13 @@ gaps on the parallel bus. The panel uses RGB565, MADCTL `0x60` and no RAM
 offset. LCD/DMA waits are bounded; a display failure disables rendering while
 the ISP protocol remains available. Camera and PMIC setup are not required.
 
-Physical Cube progress display and HuskyLens regression checks remain hardware
-acceptance steps; host renders and builds do not establish those results.
+On 2026-10-30, Cube SRAM D2/E0 startup and firmware programming were checked on
+COM15. The user confirmed `MAIX CUBE UPDATE` / `WAITING FOR HOST`, followed by
+increasing percentages and a filling progress bar during programming at
+460800 baud. HuskyLens physical regression remains a separate acceptance step.
 
-On 2026-10-30, the Cube build passed SRAM D2/E0 startup and a complete firmware
-write/reboot on COM15 at 1.5 Mbaud. Hardware testing exposed a missing DMA clock
-gate in the minimal BSP; it is restored and covered by a native test that runs
-the actual BSP clock dispatcher. Visual progress acceptance remains separate.
+The minimal BSP enables the DMA clock gate; a native regression test runs the
+actual BSP clock dispatcher instead of mocking it.
 
 DMA completion accepts the normal source/destination transaction flags
 (bits 3/4, including observed status `0x12`). Only the source/destination/LLI
