@@ -121,3 +121,7 @@ On 2026-10-30, the Cube build passed SRAM D2/E0 startup and a complete firmware
 write/reboot on COM15 at 1.5 Mbaud. Hardware testing exposed a missing DMA clock
 gate in the minimal BSP; it is restored and covered by a native test that runs
 the actual BSP clock dispatcher. Visual progress acceptance remains separate.
+
+DMA completion accepts the normal source/destination transaction flags
+(bits 3/4, including observed status `0x12`). Only the source/destination/LLI
+error flags in bits 5-12 disable rendering; completion alone is not an error.

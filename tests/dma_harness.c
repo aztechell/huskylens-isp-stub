@@ -48,9 +48,18 @@ int main(void)
     assert(isp_dma_busy() && !isp_dma_start(source, &destination, 1U));
     assert(!isp_dma_succeeded());
     regs->chen = 0U;
-    regs->channel[0].intstatus = 2U;
-    assert(isp_dma_succeeded());
-    regs->channel[0].intstatus = 0x22U;
+    const unsigned completions[] = {2U, 3U, 0xAU, 0x12U, 0x1BU};
+    for(unsigned i = 0U; i < sizeof(completions) / sizeof(completions[0]); ++i)
+    {
+        regs->channel[0].intstatus = completions[i];
+        assert(isp_dma_succeeded());
+    }
+    for(unsigned bit = 5U; bit <= 12U; ++bit)
+    {
+        regs->channel[0].intstatus = 2U | (1U << bit);
+        assert(!isp_dma_succeeded());
+    }
+    regs->channel[0].intstatus = 0x10U;
     assert(!isp_dma_succeeded());
     assert(!isp_dma_start(source, &destination, 0U));
     isp_dma_abort(); assert(regs->chen == 0x100U);

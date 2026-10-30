@@ -12,6 +12,7 @@
 #include <sysctl.h>
 
 static volatile dmac_t *const lcd_dma = (volatile dmac_t *)DMAC_BASE_ADDR;
+#define DMA_ERROR_STATUS 0x1FE0U /* source/destination/LLI errors, bits 5-12 */
 
 int isp_dma_init(uint64_t timeout_cycles)
 {
@@ -67,7 +68,7 @@ int isp_dma_start(const uint32_t *source, volatile uint32_t *destination, size_t
     lcd_dma->channel[0].ctl = ctl.data;
     lcd_dma->channel[0].block_ts = count - 1U;
     lcd_dma->channel[0].intclear = 0xFFFFFFFFU;
-    lcd_dma->channel[0].intstatus_en = 0xFFFFFFFFU;
+    lcd_dma->channel[0].intstatus_en = DMA_ERROR_STATUS | 2U;
     __sync_synchronize();
     lcd_dma->chen = 0x101U;
     return 1;
@@ -76,7 +77,8 @@ int isp_dma_start(const uint32_t *source, volatile uint32_t *destination, size_t
 int isp_dma_succeeded(void)
 {
     uint64_t status = lcd_dma->channel[0].intstatus;
-    return !isp_dma_busy() && (status & 2U) != 0U && (status & ~3ULL) == 0U;
+    /* Bits 3/4 report normal source/destination transaction completion. */
+    return !isp_dma_busy() && (status & 2U) != 0U && (status & DMA_ERROR_STATUS) == 0U;
 }
 
 void isp_dma_abort(void)
