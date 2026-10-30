@@ -26,9 +26,9 @@ or use the reproducible checked-in copy:
 
 `artifacts.json` records the sizes and SHA-256 checksums. The uploader selects
 the binary from its board profile; the stub does not auto-detect hardware.
-Starting with v1.2, releases include both board-specific binaries and their
-checksums. Only the matching `.bin` is needed for flashing; ELF and map files
-are optional debugging artifacts.
+Starting with v1.2, release assets contain only the two board-specific `.bin`
+files and their `.sha256` checksums. Only the matching `.bin` is needed for
+flashing. ELF/map files and the manifest remain available as CI artifacts.
 
 ## Build
 
@@ -68,8 +68,9 @@ Native host tests run the actual C UI/font, Cube LCD transport and DMA register
 setup with fake hardware. Set `ISP_PREVIEW_DIR` to a directory when running
 the tests to save PPM previews for both screen sizes.
 
-Pushing a `v*` tag rebuilds and tests both targets, then publishes both binaries,
-checksums, ELFs, maps and the manifest as GitHub release assets.
+Pushing a `v*` tag rebuilds and tests both targets, then publishes only the two
+binaries and their checksums as GitHub release assets. CI retains the ELF/map
+files and manifest for debugging and automated checks.
 
 ## Protocol
 

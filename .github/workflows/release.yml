@@ -40,11 +40,6 @@ jobs:
             build/isp_prog_huskylens.bin.sha256 \
             build/isp_prog_cube.bin \
             build/isp_prog_cube.bin.sha256 \
-            build/isp_stub.elf \
-            build/isp_stub.map \
-            build/isp_stub_cube.elf \
-            build/isp_stub_cube.map \
-            artifacts.json \
             --verify-tag \
             --title "HuskyLens and Maix Cube ISP Stubs $GITHUB_REF_NAME" \
             --generate-notes
