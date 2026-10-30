@@ -15,7 +15,9 @@ the device reboots.
 
 ## Download
 
-Use the reproducible checked-in binary for the selected board:
+Download the binary for the selected board from the
+[latest release](https://github.com/aztechell/huskylens-isp-stub/releases/latest),
+or use the reproducible checked-in copy:
 
 | Board | Binary |
 | --- | --- |
@@ -24,8 +26,9 @@ Use the reproducible checked-in binary for the selected board:
 
 `artifacts.json` records the sizes and SHA-256 checksums. The uploader selects
 the binary from its board profile; the stub does not auto-detect hardware.
-The latest tagged release may predate Cube support; use the checked-in pair
-until a release containing both artifacts is published.
+Starting with v1.2, releases include both board-specific binaries and their
+checksums. Only the matching `.bin` is needed for flashing; ELF and map files
+are optional debugging artifacts.
 
 ## Build
 
